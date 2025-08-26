@@ -363,5 +363,3 @@ FILE* fopen(const char *path, const char *mode) {
     }
     return original_fopen(path, mode);
 }
-```
-With this change, the process hiding is much more reliable. Let me know if you have any other questio
